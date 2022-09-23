@@ -55,46 +55,61 @@ def cli(interactive: bool, files_path: str, frame_type: str = 'WIB', map_id: str
     
     rich.print(adc_files)
     
-    for i in range(9):
-        try:
-            rtpc_df = rdm.load_tpcs(adc_files[i])
-            rich.print(rtpc_df)
+    rtpc_df = rdm.load_tpcs(adc_files[0])
+    rich.print(rtpc_df)
 
-            tpgm = TPGManager(800, "data/fir_coeffs.dat", 6, 100)
-            pedestal = tpgm.pedestal_subtraction(rtpc_df[2546].values)
-            fir = tpgm.fir_filter(pedestal[0])
-            break
-        except:
-            pass
-    #hits = tpgm.hit_finder(fir)
+    tpgm = TPGManager(8000, "data/fir_coeffs.dat", 6, 100)
+    channel = rtpc_df.keys()[0]
+    tp_df, ped_df, fir_df = tpgm.run_channel(rtpc_df, channel, pedchan=True)
 
-    #rich.print(hits[0])
-    #rich.print(hits[1])
-    #rich.print(hits[2])
+    rich.print(tp_df)
+    rich.print(ped_df)
+    rich.print(fir_df)
 
-    fig = plt.figure()
-    plt.style.use('ggplot')
-    ax = fig.add_subplot(111)
+    out_path = "./plots.pdf"
+    pdf = matplotlib.backends.backend_pdf.PdfPages(out_path)
+    for j in range(len(tp_df)):
 
-    #plt.plot(rtpc_df[199].values, c="dodgerblue", label="Raw")
-    plt.plot(pedestal[0], c="red", alpha=0.8, label="Pedestal")
-    plt.plot(fir, c="green", alpha=0.6, marker="x", label="FIR")
-    #for i in range(len(hits[1])):
-    #    ax.axvspan(hits[0][i], hits[1][i], alpha=0.4, color='red')
-    #    ax.axvline(x=hits[4][i], linestyle="--", alpha=0.6, color='black')
+        tstamp = tp_df["ts"][j]
+        start_time = tp_df["start_time"][j]
+        end_time = tp_df["end_time"][j]
+        peak_time = tp_df["peak_time"][j]
+        fw_median = tp_df["median"][j]
 
-    #plt.xlim(13150, 13300)
-    #plt.ylim(-200, 200)
-    plt.xlabel("Time [samples]", fontsize=14, labelpad=10, loc="right")
-    plt.ylabel("Amplitude [ADC]", fontsize=14, labelpad=10, loc="top")
+        fig = plt.figure()
+        plt.style.use('ggplot')
+        ax = fig.add_subplot(111)
 
-    legend = plt.legend(fontsize=12, loc="upper right")
-    frame = legend.get_frame()
-    frame.set_color('white')
-    frame.set_alpha(0.8)
-    frame.set_linewidth(0)
+        #plt.plot(rtpc_df[199].values, c="dodgerblue", label="Raw")
+        plt.plot(ped_df, c="red", alpha=0.8, label="Pedestal")
+        plt.plot(fir_df, c="green", alpha=0.6, label="FIR")
 
-    plt.savefig("fir_new.png", dpi=500)
+        for i in range(4):
+            plt.axvline(x=-2048+i*2048+tstamp, linestyle=":", c="k", alpha=0.2)
+    
+        ax.axvspan(start_time*32+tstamp, end_time*32+tstamp, alpha=0.4, color='red')
+        ax.axvline(x=peak_time*32+tstamp, linestyle="--", alpha=0.6, color='black')
+
+        #ax.hlines(y=fw_median, xmin=tstamp, xmax=2048+tstamp, linestyle="-.", colors="black", alpha=0.5, label="median")
+        ax.hlines(y=100, xmin=tstamp, xmax=2048+tstamp, linestyle="-.", colors="limegreen", alpha=0.5, label="median+threshold")
+
+        plt.xlim(tstamp-2048, tstamp+2*2048)
+        plt.ylim(-250, 250)
+
+        plt.xlabel("Time [tstamp]", fontsize=14, labelpad=10, loc="right")
+        plt.ylabel("Amplitude [ADC]", fontsize=14, labelpad=10, loc="top")
+
+        legend = plt.legend(fontsize=12, loc="upper right")
+        frame = legend.get_frame()
+        frame.set_color('white')
+        frame.set_alpha(0.8)
+        frame.set_linewidth(0)
+
+        pdf.savefig()
+        plt.close()
+
+    pdf.close()
+
 
     if interactive:
         import IPython

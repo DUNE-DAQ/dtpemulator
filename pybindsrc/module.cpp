@@ -33,8 +33,8 @@ namespace dunedaq
         m.doc() = "c++ implementation of the dunedaq dtp emulator modules"; // optional module docstring
 
         py::class_<TPGenerator>(m, "TPGenerator")
-            .def(py::init<const unsigned int, const std::string, const unsigned int, const unsigned int>())
-            .def("pedestal_subtraction", &TPGenerator::pedestal_subtraction, py::arg("adcs"), py::arg("limit") = 10)
+            .def(py::init<const std::string, const unsigned int, const unsigned int>())
+            .def("pedestal_subtraction", &TPGenerator::pedestal_subtraction, py::arg("adcs"), py::arg("ini_median"), py::arg("ini_accum"), py::arg("limit") = 10)
             .def("fir_filter", &TPGenerator::fir_filter, py::arg("adcs"))
             .def("hit_finder", &TPGenerator::hit_finder, py::arg("adcs"), py::arg("tov_min") = 4)
             ;

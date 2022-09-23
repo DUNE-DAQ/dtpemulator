@@ -7,11 +7,8 @@ namespace dunedaq
   namespace dtpemulator
   {
 
-    TPGenerator::TPGenerator(const unsigned int initial_pedestal, const std::string fir_data, const unsigned int fir_shift, const unsigned int threshold)
+    TPGenerator::TPGenerator(const std::string fir_data, const unsigned int fir_shift, const unsigned int threshold)
     {
-
-      m_initial_pedestal = initial_pedestal;
-      std::cout << "Initial pedestal set to " << m_initial_pedestal << std::endl;
 
       std::ifstream is(fir_data);
       double tap;
@@ -19,13 +16,13 @@ namespace dunedaq
         //std::cout << tap << std::endl;
         m_fir_coeffs.push_back(tap);
       }
-      std::cout << "Number of taps " << m_fir_coeffs.size() << std::endl;
+      //std::cout << "Number of taps " << m_fir_coeffs.size() << std::endl;
 
       m_fir_shift = fir_shift;
-      std::cout << "FIR shift " << m_fir_shift << std::endl;
+      //std::cout << "FIR shift " << m_fir_shift << std::endl;
 
       m_threshold = threshold;
-      std::cout << "Threshold " << m_threshold << std::endl;
+      //std::cout << "Threshold " << m_threshold << std::endl;
 
     }
 
@@ -34,10 +31,10 @@ namespace dunedaq
     }
 
     std::vector<std::vector<int>>
-    TPGenerator::pedestal_subtraction(std::vector<int> adcs, int limit) {
+    TPGenerator::pedestal_subtraction(std::vector<int> adcs, int ini_median, int ini_accum, int limit) {
 
-      int median = m_initial_pedestal;
-      int accumulator = 0;
+      int median = ini_median;
+      int accumulator = ini_accum;
       std::vector<int> pedsub;
       std::vector<int> pedval;
       std::vector<int> accum;
@@ -116,6 +113,8 @@ namespace dunedaq
         it_adcs++;
       }
 
+      if(igt.size() < tov_min){return std::vector<std::vector<int>>();}
+
       std::vector<int> igt_diff;
       std::adjacent_difference (igt.begin(), igt.end(), std::back_inserter(igt_diff));
       igt_diff.erase(igt_diff.begin());
@@ -135,9 +134,15 @@ namespace dunedaq
 
       std::vector<int> start;
       std::vector<int> end;
+      std::vector<int> hitcontinue;
       for(long unsigned int i = 0; i < istart.size(); i++){
         start.push_back(igt[istart[i]]);
         end.push_back(igt[iend[i]]);
+        if(end[i] == 63){
+          hitcontinue.push_back(1);
+        }else{
+          hitcontinue.push_back(0);
+        }
       }
 
       // find hit sums
@@ -162,11 +167,15 @@ namespace dunedaq
         peak_times.push_back(time);
       }
 
+      // check output hits fullfil the tov_min condition
+      std::vector<std::vector<int>> out;
       for(long unsigned int k = 0; k < start.size(); k++){
-        std::cout << "# hit " << k << ", start time " << start[k] << ", end time " << end[k] << ", peak time " << peak_times[k] << ", peak adc " << peak_adcs[k] << ", sum adc " << sums[k] << std::endl;
+        if (end[k]-start[k] > tov_min){
+          std::vector<int> aux = {start[k], end[k], peak_times[k], peak_adcs[k], sums[k], hitcontinue[k]};
+          out.push_back(aux);
+          //std::cout << "# hit " << k << ", start time " << start[k] << ", end time " << end[k] << ", peak time " << peak_times[k] << ", peak adc " << peak_adcs[k] << ", sum adc " << sums[k] << ", hit continue " << hitcontinue[k] << std::endl;
+        }
       }
-
-      std::vector<std::vector<int>> out = {start, end, sums, peak_adcs, peak_times};
 
       return out;
 
