@@ -20,6 +20,8 @@ tp_block_bytes = tp_block_size*4
 
 NS_PER_TICK = 16
 
+hit_labels = {'start_time':("start time", " [ticks]"), 'end_time':("end time", " [ticks]"), 'peak_time':("peak time", " [ticks]"), 'peak_adc':("peak adc", " [ADCs]"), 'sum_adc':("sum adc", " [adc]")}
+
 def overlap_check(tp_tstamp, adc_tstamp):
     overlap_true = (adc_tstamp[0] <= tp_tstamp[1])&(adc_tstamp[1] >= tp_tstamp[0])
     overlap_time = max(0, min(tp_tstamp[1], adc_tstamp[1]) - max(tp_tstamp[0], adc_tstamp[0]))
@@ -57,59 +59,52 @@ def cli(interactive: bool, files_path: str, frame_type: str = 'WIB', map_id: str
     
     rtpc_df = rdm.load_tpcs(adc_files[0])
     rich.print(rtpc_df)
+    ts_tpc_min, ts_tpc_max = rdm.find_tpc_ts_minmax(adc_files[0])
+
+    ts_tp_min, ts_tp_max = rdm.find_tp_ts_minmax(tp_files[0])
+    overlaps = overlap_boundaries([ts_tp_min, ts_tp_max], [ts_tpc_min, ts_tpc_max])
+    offset_low, offset_high = rdm.linear_search_tp(tp_files[0], overlaps[0], overlaps[1])
+
+    rtp_df = rdm.load_tps(tp_files[0], int((offset_high-offset_low)//tp_block_bytes), int(offset_low//tp_block_bytes))
+    rich.print(rtp_df)
+
+    y = lambda x: (ts_tpc_min+32*x-ts_tp_min)%2048
+    seq = np.arange(0,64,1)
+    min_remainder = np.min(list(map(y, seq)))
+    min_indx = np.argmin(list(map(y, seq)))
+    min_shift = seq[min_indx]
+    rich.print(min_remainder, min_shift)
 
     tpgm = TPGManager(8000, "data/fir_coeffs.dat", 6, 100)
-    channel = rtpc_df.keys()[0]
-    tp_df, ped_df, fir_df = tpgm.run_channel(rtpc_df, channel, pedchan=True)
+    tp_df, ped_df, fir_df = tpgm.run_capture(rtpc_df, ts_tpc_min, ts_tp_min, pedchan=True)
 
     rich.print(tp_df)
-    rich.print(ped_df)
-    rich.print(fir_df)
 
-    out_path = "./plots.pdf"
+    tp_df.to_hdf("emu_tp.hdf5", key="tp")
+
+    comp_df = pd.merge(tp_df, rtp_df, on=["ts", "offline_ch"])
+    comp_df.to_hdf("comp.hdf5", key="comp")
+
+    out_path = "./plots_2d.pdf"
     pdf = matplotlib.backends.backend_pdf.PdfPages(out_path)
-    for j in range(len(tp_df)):
-
-        tstamp = tp_df["ts"][j]
-        start_time = tp_df["start_time"][j]
-        end_time = tp_df["end_time"][j]
-        peak_time = tp_df["peak_time"][j]
-        fw_median = tp_df["median"][j]
-
+    for var in hit_labels.keys():
         fig = plt.figure()
         plt.style.use('ggplot')
         ax = fig.add_subplot(111)
 
-        #plt.plot(rtpc_df[199].values, c="dodgerblue", label="Raw")
-        plt.plot(ped_df, c="red", alpha=0.8, label="PedSub")
-        plt.plot(fir_df, c="green", alpha=0.6, label="FIR")
+        if((var == "peak_adc")or(var == "sum_adc")):
+            out_min = min(np.min(comp_df[var+"_x"]), np.min(comp_df[var+"_y"]))
+            out_max = max(np.max(comp_df[var+"_x"]), np.max(comp_df[var+"_y"]))
+            plt.hist2d(comp_df[var+"_x"], comp_df[var+"_y"], bins=[np.linspace(out_min,out_max,100), np.linspace(out_min,out_max,100)], cmap="plasma", norm=matplotlib.colors.LogNorm())
+        else:
+            plt.hist2d(comp_df[var+"_x"], comp_df[var+"_y"], bins=[np.arange(0,64,1), np.arange(0,64,1)], cmap="plasma", norm=matplotlib.colors.LogNorm())
 
-        for i in range(4):
-            plt.axvline(x=-2048+i*2048+tstamp, linestyle=":", c="k", alpha=0.2)
-    
-        ax.axvspan(start_time*32+tstamp, end_time*32+tstamp, alpha=0.4, color='red')
-        ax.axvline(x=peak_time*32+tstamp, linestyle="--", alpha=0.6, color='black')
-
-        #ax.hlines(y=fw_median, xmin=tstamp, xmax=2048+tstamp, linestyle="-.", colors="black", alpha=0.5, label="median")
-        ax.hlines(y=100, xmin=tstamp, xmax=2048+tstamp, linestyle="-.", colors="limegreen", alpha=0.5, label="threshold")
-
-        plt.xlim(tstamp-2048, tstamp+2*2048)
-        plt.ylim(-250, 250)
-
-        plt.xlabel("Time [tstamp]", fontsize=14, labelpad=10, loc="right")
-        plt.ylabel("Amplitude [ADC]", fontsize=14, labelpad=10, loc="top")
-
-        legend = plt.legend(fontsize=12, loc="upper right")
-        frame = legend.get_frame()
-        frame.set_color('white')
-        frame.set_alpha(0.8)
-        frame.set_linewidth(0)
+        plt.xlabel("Emulated "+hit_labels[var][0]+hit_labels[var][1], fontsize=14, labelpad=10, loc="right")
+        plt.ylabel("Firmware "+hit_labels[var][0]+hit_labels[var][1], fontsize=14, labelpad=10, loc="top")
 
         pdf.savefig()
         plt.close()
-
     pdf.close()
-
 
     if interactive:
         import IPython
