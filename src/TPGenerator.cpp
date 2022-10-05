@@ -60,7 +60,7 @@ namespace dunedaq
 
         pedsub.push_back(adcs[iadc] - median);
 
-        if (iadc < adcs.size() - 1){
+        if (iadc < adcs.size()){
           pedval.push_back(median);
           accum.push_back(accumulator);
         }
