@@ -3,6 +3,7 @@
 from dtpfeedbacktools.rawdatamanager import RawDataManager
 from dtpemulator.tpgmanager import TPGManager
 import sys
+import os.path
 import rich
 from rich.table import Table
 import logging
@@ -52,28 +53,33 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
 def cli(interactive: bool, files_path: str, frame_type: str = 'WIB', map_id: str = "HDColdbox") -> None:
 
-    rdm = RawDataManager(files_path, frame_type, map_id)
-    tp_files, adc_files = sorted(rdm.list_files(), reverse=True)
-    
-    rich.print(adc_files)
-    
-    rtpc_df = rdm.load_tpcs(adc_files[0])
-    rich.print(rtpc_df)
-    ts_tpc_min, ts_tpc_max = rdm.find_tpc_ts_minmax(adc_files[0])
+    if os.path.isdir(files_path):
+        rdm = RawDataManager(files_path, frame_type, map_id)
+        tp_files, adc_files = sorted(rdm.list_files(), reverse=True)
+        
+        rich.print(adc_files)
+        
+        rtpc_df = rdm.load_tpcs(adc_files[0])
+        rich.print(rtpc_df)
+        ts_tpc_min, ts_tpc_max = rdm.find_tpc_ts_minmax(adc_files[0])
 
-    ts_tp_min, ts_tp_max = rdm.find_tp_ts_minmax(tp_files[0])
-    overlaps = overlap_boundaries([ts_tp_min, ts_tp_max], [ts_tpc_min, ts_tpc_max])
-    offset_low, offset_high = rdm.linear_search_tp(tp_files[0], overlaps[0], overlaps[1])
+        ts_tp_min, ts_tp_max = rdm.find_tp_ts_minmax(tp_files[0])
+        overlaps = overlap_boundaries([ts_tp_min, ts_tp_max], [ts_tpc_min, ts_tpc_max])
+        offset_low, offset_high = rdm.linear_search_tp(tp_files[0], overlaps[0], overlaps[1])
 
-    rtp_df = rdm.load_tps(tp_files[0], int((offset_high-offset_low)//tp_block_bytes), int(offset_low//tp_block_bytes))
-    rich.print(rtp_df)
+        rtp_df = rdm.load_tps(tp_files[0], int((offset_high-offset_low)//tp_block_bytes), int(offset_low//tp_block_bytes))
+        rich.print(rtp_df)
 
-    y = lambda x: (ts_tpc_min+32*x-ts_tp_min)%2048
-    seq = np.arange(0,64,1)
-    min_remainder = np.min(list(map(y, seq)))
-    min_indx = np.argmin(list(map(y, seq)))
-    min_shift = seq[min_indx]
-    rich.print(min_remainder, min_shift)
+    else:
+        rtp_df = pd.read_hdf(files_path, 'raw_fwtps')
+        rtpc_df = pd.read_hdf(files_path, 'raw_adcs')
+
+    # y = lambda x: (ts_tpc_min+32*x-ts_tp_min)%2048
+    # seq = np.arange(0,64,1)
+    # min_remainder = np.min(list(map(y, seq)))
+    # min_indx = np.argmin(list(map(y, seq)))
+    # min_shift = seq[min_indx]
+    # rich.print(min_remainder, min_shift)
 
     tpgm = TPGManager(8000, "data/fir_coeffs.dat", 6, 100)
     tp_df, ped_df, fir_df = tpgm.run_capture(rtpc_df, ts_tpc_min, ts_tp_min, pedchan=True)
