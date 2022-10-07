@@ -50,6 +50,7 @@ CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
 def cli(interactive: bool, files_path: str, frame_type: str = 'WIB', map_id: str = "HDColdbox") -> None:
 
+    """
     rdm = RawDataManager(files_path, frame_type, map_id)
     tp_files, adc_files = sorted(rdm.list_files(), reverse=True)
     
@@ -57,14 +58,32 @@ def cli(interactive: bool, files_path: str, frame_type: str = 'WIB', map_id: str
     
     rtpc_df = rdm.load_tpcs(adc_files[0])
     rich.print(rtpc_df)
+    """
 
-    tpgm = TPGManager(8000, "data/fir_coeffs.dat", 6, 100)
-    channel = rtpc_df.keys()[0]
-    tp_df, ped_df, fir_df = tpgm.run_channel(rtpc_df, channel, pedchan=True)
+    rtpc_df = pd.read_hdf(files_path, 'rtpc')
+    rich.print(rtpc_df)
+
+    tpgm = TPGManager(500, "data/fir_coeffs.dat", 6, 20)
+    tp_df, ped_df, fir_df = tpgm.run_capture(rtpc_df, 0, 0, pedchan=False, align=False)
 
     rich.print(tp_df)
+    tp_df.to_hdf("UniqueHits_F_emulator_rtp.hdf5", "emulator_rtp")
     rich.print(ped_df)
+    #tp_df.to_hdf("../UniqueHits_F_emulator_rtp.hdf5", "emulator_rtp")
     rich.print(fir_df)
+    #fir_df.to_hdf("UniqueHits_F_emulator_fir.hdf5", "emulator_fir")
+
+    return
+
+    for i in range(4):
+        plt.axvline(x=i*64, linestyle=":", c="black", alpha=0.5)
+    plt.plot(ped_df.values)
+    plt.plot(fir_df.values, marker="x")
+    plt.scatter((tp_df["ts"]-tp_df["ts"].min())//25+tp_df["peak_time"], tp_df["peak_adc"], marker="v", c="r")
+    plt.axhline(y=20, c="g", linestyle="--", alpha=0.7)
+    plt.savefig("test.png")
+
+    return
 
     out_path = "./plots.pdf"
     pdf = matplotlib.backends.backend_pdf.PdfPages(out_path)

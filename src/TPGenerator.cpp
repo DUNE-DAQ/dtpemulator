@@ -104,16 +104,27 @@ namespace dunedaq
 
       // index of ADCs above threshold
       int threshold = (int)m_threshold;
+      // std::cout << "threshold " << threshold << std::endl;
+      // for(long unsigned int m = 0; m < adcs.size(); m++){
+      //   std::cout << adcs[m] << std::endl;
+      // }
 
       std::vector<int> igt;
       std::vector<int>::iterator it_adcs = adcs.begin();
-      while ((it_adcs = std::find_if(it_adcs, adcs.end(), [&threshold](int x){return x >= threshold; })) != adcs.end())
+      while ((it_adcs = std::find_if(it_adcs, adcs.end(), [&threshold](int x){return x > threshold; })) != adcs.end())
       {
         igt.push_back(std::distance(adcs.begin(), it_adcs));
+        // std::cout << std::distance(adcs.begin(), it_adcs) << std::endl;
         it_adcs++;
       }
 
-      if(igt.size() < tov_min){return std::vector<std::vector<int>>();}
+      // std::cout << "igt.size = " << igt.size() << std::endl;
+      // std::cout << (igt.size() < tov_min) << std::endl;
+
+      if(igt.size() < tov_min){
+        // std::cout << "tov_min condition not fulfilled for whole packet!" << std::endl;
+        return std::vector<std::vector<int>>();
+      }
 
       std::vector<int> igt_diff;
       std::adjacent_difference (igt.begin(), igt.end(), std::back_inserter(igt_diff));
@@ -170,10 +181,10 @@ namespace dunedaq
       // check output hits fullfil the tov_min condition
       std::vector<std::vector<int>> out;
       for(long unsigned int k = 0; k < start.size(); k++){
-        if (end[k]-start[k] > tov_min){
+        if (end[k]-start[k] >= tov_min-1){
           std::vector<int> aux = {start[k], end[k], peak_times[k], peak_adcs[k], sums[k], hitcontinue[k]};
           out.push_back(aux);
-          //std::cout << "# hit " << k << ", start time " << start[k] << ", end time " << end[k] << ", peak time " << peak_times[k] << ", peak adc " << peak_adcs[k] << ", sum adc " << sums[k] << ", hit continue " << hitcontinue[k] << std::endl;
+          // std::cout << "# hit " << k << ", start time " << start[k] << ", end time " << end[k] << ", peak time " << peak_times[k] << ", peak adc " << peak_adcs[k] << ", sum adc " << sums[k] << ", hit continue " << hitcontinue[k] << std::endl;
         }
       }
 

@@ -5,16 +5,44 @@ import rich
 from rich import print
 from rich.progress import track
 
+import detchannelmaps
 import dtpemulator
+
+class VSTChannelMap(object):
+
+    @staticmethod
+    def get_offline_channel_from_crate_slot_fiber_chan(crate_no, slot_no, fiber_no, ch_no):
+        return 256*fiber_no+ch_no
+
+    @staticmethod
+    def get_plane_from_offline_channel(ch):
+        return 0
 
 class TPGManager:
 
-    def __init__(self, initial_pedestal, fir_path, fir_shift, threshold) -> None:
+    @staticmethod
+    def make_channel_map(map_id):
+
+        if map_id == 'VDColdbox':
+            return detchannelmaps.make_map('VDColdboxChannelMap')
+        elif map_id == 'HDColdbox':
+            return detchannelmaps.make_map('HDColdboxChannelMap')
+        elif map_id == 'ProtoDUNESP1':
+            return detchannelmaps.make_map('ProtoDUNESP1ChannelMap')
+        elif map_id == 'PD2HD':
+            return detchannelmaps.make_map('PD2HDChannelMap')
+        elif map_id == 'VST':
+            return VSTChannelMap()
+        else:
+            raise RuntimeError(f"Unknown channel map id '{map_id}'")
+
+    def __init__(self, initial_pedestal, fir_path, fir_shift, threshold, ch_map_id="HDColdbox") -> None:
 
         self.initial_pedestal = initial_pedestal
         self.fir_path = fir_path
         self.fir_shift = fir_shift
         self.threshold = threshold
+        self.ch_map = self.make_channel_map(ch_map_id)
     
     def pedestal_subtraction(self, rtpc_df, channel, pedchan=False) -> list:
         if pedchan:
@@ -36,18 +64,46 @@ class TPGManager:
         fir_df = pd.DataFrame(fir, index=timestamps, columns=[channel])
         return fir_df
 
+    #def hit_finder(self, rtpc_df, channel, tov_min=4, align=False) -> list:
     def hit_finder(self, adcs, tov_min=4) -> list:
-        tpg = dtpemulator.TPGenerator(self.initial_pedestal, self.fir_path, self.fir_shift, self.threshold)
+        """
+        if align:
+            y = lambda x: (ts_tpc_min+32*x-ts_tp)%2048
+            seq = np.arange(0,64,1)
+            min_remainder = np.min(list(map(y, seq)))
+            min_indx = np.argmin(list(map(y, seq)))
+            shift = seq[min_indx]
+        else:
+            shift = 0
+        
+        n_packets = (rtpc_df[channel].shape[0]-shift)//64 
+        timestamps = rtpc_df[channel].index.astype(int)[shift:64*n_packets+shift]
+
+        ini_pedestal = self.initial_pedestal
+        ini_accum = 0
+        ssr_adcs = np.zeros(31)
+
+        tp_array = []
+
+        for i in range(n_packets):
+            adcs = rtpc_df[channel].iloc[shift+i*64:64+shift+i*64].values
+            rich.print(adcs)
+            tp_packet, adcs_sub, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=False)
+            ssr_adcs = adcs_sub[-31:]
+            if(len(tp_packet) > 0): tp_array.append(tp_packet)
+        """
+        tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
         hits = tpg.hit_finder(adcs, tov_min)
         return hits
 
-    def run_packet(self, rtpc_df, channel, ini_pedestal, ini_accum, ssr_adcs, tov_min) -> list:
+    def run_packet(self, rtpc_df, channel, ini_pedestal, ini_accum, ssr_adcs, tov_min, ped_debug) -> list:
         tstamp = rtpc_df.index[0].astype(int)
         #rich.print("in packet", tstamp)
         adcs = rtpc_df.values
         tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
         pedestal = tpg.pedestal_subtraction(adcs, ini_pedestal, ini_accum)
         adcs_sub = np.array(pedestal[0])
+        pedval = np.array(pedestal[1])
         median = pedestal[1][0]
         ini_pedestal = pedestal[1][-1]
         accumulator = pedestal[2][0]
@@ -60,10 +116,13 @@ class TPGManager:
         tp_array = np.column_stack((tstamp*aux, channel*aux, median*aux, accumulator*aux, hits)).astype(int)
         #rich.print("in tp array", tp_array[:,0])
 
-        return tp_array, adcs_sub, adcs_fir, ini_pedestal, ini_accum
+        if ped_debug:
+            return tp_array, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum
+        else:
+            return tp_array, adcs_sub, adcs_fir, ini_pedestal, ini_accum
 
 
-    def run_channel(self, rtpc_df, channel, shift=0, pedchan=False) -> list:
+    def run_channel(self, rtpc_df, channel, shift=0, pedchan=False, ped_debug=False) -> list:
         if pedchan:
             self.initial_pedestal = rtpc_df[channel].values[0]
         tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
@@ -77,6 +136,7 @@ class TPGManager:
 
         tp_array = []
         ped_wave = []
+        pedval_list = []
         fir_wave = []
 
         #rich.print("first ts in list", timestamps[0])
@@ -84,7 +144,11 @@ class TPGManager:
         for i in range(n_packets):
             
             #rich.print(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64].values, channel)
-            tp_packet, adcs_sub, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4)
+            if ped_debug:
+                tp_packet, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
+                pedval_list.append(pedval)
+            else:
+                tp_packet, adcs_sub, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
             ssr_adcs = adcs_sub[-31:]
             ped_wave.append(adcs_sub)
             fir_wave.append(adcs_fir)
@@ -92,9 +156,13 @@ class TPGManager:
 
         ped_wave = np.concatenate((ped_wave))
         fir_wave = np.concatenate((fir_wave))
+        if ped_debug:
+            pedval_list = np.concatenate((pedval_list))
 
-        ped_df = pd.DataFrame(ped_wave, index=timestamps, columns=[str(channel)])
-        fir_df = pd.DataFrame(fir_wave, index=timestamps, columns=[str(channel)])
+        ped_df = pd.DataFrame(ped_wave, index=timestamps, columns=[channel])
+        fir_df = pd.DataFrame(fir_wave, index=timestamps, columns=[channel])
+        if ped_debug:
+            pedval_df = pd.DataFrame(pedval_list, index=timestamps, columns=[channel])
 
         if(len(tp_array) == 0):
             tp_array = -np.ones((1,10))
@@ -104,7 +172,10 @@ class TPGManager:
         tp_array = np.concatenate((tp_array))
         tp_df = pd.DataFrame(tp_array, columns=['ts', 'offline_ch', 'median', 'accumulator', 'start_time', 'end_time', 'peak_time', 'peak_adc', 'sum_adc', 'hit_continue'])
 
-        return tp_df, ped_df, fir_df
+        if ped_debug:
+            return tp_df, ped_df, pedval_df, fir_df
+        else:
+            return tp_df, ped_df, fir_df
 
     def run_capture(self, rtpc_df, ts_tpc_min, ts_tp_min, pedchan=False, align=True) -> list:
         if align:
