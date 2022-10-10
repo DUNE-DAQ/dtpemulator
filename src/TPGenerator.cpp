@@ -160,7 +160,7 @@ namespace dunedaq
       std::vector<int> sums;
       for(long unsigned int j = 0; j < start.size(); j++){
         std::vector<int>::iterator it_start = adcs.begin()+start[j];
-        std::vector<int>::iterator it_end = adcs.begin()+end[j];
+        std::vector<int>::iterator it_end = adcs.begin()+end[j]+1;
         int sum = std::accumulate(it_start, it_end, 0);
         sums.push_back(sum);
       }
@@ -170,7 +170,7 @@ namespace dunedaq
       std::vector<int> peak_times;
       for(long unsigned int j = 0; j < start.size(); j++){
         std::vector<int>::iterator it_start = adcs.begin()+start[j];
-        std::vector<int>::iterator it_end = adcs.begin()+end[j];
+        std::vector<int>::iterator it_end = adcs.begin()+end[j]+1;
         std::vector<int>::iterator max = std::max_element(it_start, it_end);
         int peak = *max;
         int time = distance(adcs.begin(), max);
