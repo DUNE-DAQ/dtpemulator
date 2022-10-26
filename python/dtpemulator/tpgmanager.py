@@ -96,7 +96,7 @@ class TPGManager:
         hits = tpg.hit_finder(adcs, tov_min)
         return hits
 
-    def run_packet(self, rtpc_df, channel, ini_pedestal, ini_accum, ssr_adcs, tov_min, ped_debug) -> list:
+    def run_packet(self, rtpc_df, channel, ini_pedestal, ini_accum, ssr_adcs, tov_min, skip_hf) -> list:
         tstamp = rtpc_df.index[0].astype(int)
         #rich.print("in packet", tstamp)
         adcs = rtpc_df.values
@@ -110,19 +110,19 @@ class TPGManager:
         ini_accum = pedestal[2][-1]
         fir = tpg.fir_filter(np.concatenate((ssr_adcs, adcs_sub)).astype(int))
         adcs_fir = np.array(fir)[31:]
+        if skip_hf:
+            return adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum
+
         hits = np.array(tpg.hit_finder(adcs_fir, tov_min))
         aux = np.ones(len(hits)).astype(int)
 
         tp_array = np.column_stack((tstamp*aux, channel*aux, median*aux, accumulator*aux, hits)).astype(int)
         #rich.print("in tp array", tp_array[:,0])
 
-        if ped_debug:
-            return tp_array, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum
-        else:
-            return tp_array, adcs_sub, adcs_fir, ini_pedestal, ini_accum
+        return tp_array, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum
 
 
-    def run_channel(self, rtpc_df, channel, shift=0, pedchan=False, ped_debug=False) -> list:
+    def run_channel(self, rtpc_df, channel, shift=0, pedchan=False, skip_hf=False) -> list:
         if pedchan:
             self.initial_pedestal = rtpc_df[channel].values[0]
         tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
@@ -142,42 +142,39 @@ class TPGManager:
         #rich.print("first ts in list", timestamps[0])
 
         for i in range(n_packets):
-            
-            #rich.print(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64].values, channel)
-            if ped_debug:
-                tp_packet, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
-                pedval_list.append(pedval)
+            if skip_hf:
+                adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
             else:
-                tp_packet, adcs_sub, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
+                tp_packet, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
+                if(len(tp_packet) > 0): tp_array.append(tp_packet)
+
             ssr_adcs = adcs_sub[-31:]
             ped_wave.append(adcs_sub)
+            pedval_list.append(pedval)
             fir_wave.append(adcs_fir)
-            if(len(tp_packet) > 0): tp_array.append(tp_packet)
 
         ped_wave = np.concatenate((ped_wave))
+        pedval_list = np.concatenate((pedval_list))
         fir_wave = np.concatenate((fir_wave))
-        if ped_debug:
-            pedval_list = np.concatenate((pedval_list))
 
         ped_df = pd.DataFrame(ped_wave, index=timestamps, columns=[channel])
+        pedval_df = pd.DataFrame(pedval_list, index=timestamps, columns=[channel])
         fir_df = pd.DataFrame(fir_wave, index=timestamps, columns=[channel])
-        if ped_debug:
-            pedval_df = pd.DataFrame(pedval_list, index=timestamps, columns=[channel])
+
+        if skip_hf:
+            return ped_df, pedval_df, fir_df
 
         if(len(tp_array) == 0):
-            tp_array = -np.ones((1,10))
+            tp_array = -np.ones((1,10), dtype=int)
             tp_df = pd.DataFrame(tp_array, columns=['ts', 'offline_ch', 'median', 'accumulator', 'start_time', 'end_time', 'peak_time', 'peak_adc', 'sum_adc', 'hit_continue'])
             return tp_df, ped_df, fir_df
 
         tp_array = np.concatenate((tp_array))
         tp_df = pd.DataFrame(tp_array, columns=['ts', 'offline_ch', 'median', 'accumulator', 'start_time', 'end_time', 'peak_time', 'peak_adc', 'sum_adc', 'hit_continue'])
 
-        if ped_debug:
-            return tp_df, ped_df, pedval_df, fir_df
-        else:
-            return tp_df, ped_df, fir_df
+        return tp_df, ped_df, pedval_df, fir_df
 
-    def run_capture(self, rtpc_df, ts_tpc_min, ts_tp_min, pedchan=False, align=True) -> list:
+    def run_capture(self, rtpc_df, ts_tpc_min, ts_tp_min, pedchan=False, align=True, skip_hf=False) -> list:
         if align:
             y = lambda x: (ts_tpc_min+32*x-ts_tp_min)%2048
             seq = np.arange(0,64,1)
@@ -190,15 +187,26 @@ class TPGManager:
         chan_list = rtpc_df.keys()
         tp_df = []
         ped_df = []
+        pedval_df = []
         fir_df = []
         for chan in track(chan_list, description="Processing channels..."):
-            tp_chan_df, ped_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan)
-            tp_df.append(tp_chan_df)
+            if skip_hf:
+                ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan)
+            else:
+                tp_chan_df, ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan)
+                tp_df.append(tp_chan_df)
             ped_df.append(ped_chan_df)
+            pedval_df.append(pedval_chan_df)
             fir_df.append(fir_chan_df)
         
-        tp_df = pd.concat(tp_df, ignore_index=True)
         ped_df = pd.concat(ped_df, axis=1)
+        pedval_df = pd.concat(pedval_df, axis=1)
         fir_df = pd.concat(fir_df, axis=1)
 
-        return tp_df, ped_df, fir_df
+        if skip_hf:
+            return ped_df, pedval_df, fir_df
+
+        tp_df = pd.concat(tp_df, ignore_index=True)
+        tp_df = tp_df.loc[tp_df['ts'] != -1].reset_index(drop=True)
+
+        return tp_df, ped_df, pedval_df, fir_df
