@@ -44,24 +44,46 @@ class TPGManager:
         self.threshold = threshold
         self.ch_map = self.make_channel_map(ch_map_id)
     
-    def pedestal_subtraction(self, rtpc_df, channel, pedchan=False) -> list:
-        if pedchan:
-            self.initial_pedestal = rtpc_df[channel].values[0]
-        timestamps = rtpc_df[channel].index.astype(int)
-        adcs = rtpc_df[channel].values
-        tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
-        pedsub, pedval, accum = tpg.pedestal_subtraction(adcs, self.initial_pedestal, 0, 10)
-        pedsub_df = pd.DataFrame(pedsub, index=timestamps, columns=[channel])
-        pedval_df = pd.DataFrame(pedval, index=timestamps, columns=[channel])
-        accum_df = pd.DataFrame(accum, index=timestamps, columns=[channel])
+    def pedestal_subtraction(self, rtpc_df, pedchan=False) -> list:
+        
+        chan_list = rtpc_df.keys()
+        pedsub_df = []
+        pedval_df = []
+        accum_df  = []
+
+        for chan in track(chan_list, description="Subtracting pedestals..."):
+            if pedchan:
+                self.initial_pedestal = rtpc_df[chan].values[0]
+
+            timestamps = rtpc_df[chan].index.astype(int)
+            adcs = rtpc_df[chan].values
+            tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
+            pedsub, pedval, accum = tpg.pedestal_subtraction(adcs, self.initial_pedestal, 0, 10)
+            pedsub_chan = pd.DataFrame(pedsub, index=timestamps, columns=[chan])
+            pedval_chan = pd.DataFrame(pedval, index=timestamps, columns=[chan])
+            accum_chan = pd.DataFrame(accum, index=timestamps, columns=[chan])
+            pedsub_df.append(pedsub_chan)
+            pedval_df.append(pedval_chan)
+            accum_df.append(accum_chan)
+
+        pedsub_df = pd.concat(pedsub_df, axis=1)
+        pedval_df = pd.concat(pedval_df, axis=1)
+        accum_df = pd.concat(accum_df, axis=1)
         return pedsub_df, pedval_df, accum_df
 
-    def fir_filter(self, rtpc_df, channel) -> list:
-        timestamps = rtpc_df[channel].index.astype(int)
-        adcs = rtpc_df[channel].values
-        tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
-        fir = tpg.fir_filter(adcs)
-        fir_df = pd.DataFrame(fir, index=timestamps, columns=[channel])
+    def fir_filter(self, pedsub_df) -> list:
+        chan_list = pedsub_df.keys()
+        fir_df = []
+
+        for chan in track(chan_list, description="Applying filter..."):
+            timestamps = pedsub_df[chan].index.astype(int)
+            adcs = pedsub_df[chan].values
+            tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)
+            fir = tpg.fir_filter(adcs)
+            fir_chan = pd.DataFrame(fir, index=timestamps, columns=[chan])
+            fir_df.append(fir_chan)
+
+        fir_df = pd.concat(fir_df, axis=1)
         return fir_df
 
     #def hit_finder(self, rtpc_df, channel, tov_min=4, align=False) -> list:
@@ -143,9 +165,9 @@ class TPGManager:
 
         for i in range(n_packets):
             if skip_hf:
-                adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
+                adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, skip_hf=skip_hf)
             else:
-                tp_packet, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, ped_debug=ped_debug)
+                tp_packet, adcs_sub, pedval, adcs_fir, ini_pedestal, ini_accum = self.run_packet(rtpc_df[channel].iloc[shift+i*64:64+shift+i*64], channel, ini_pedestal, ini_accum, ssr_adcs, tov_min=4, skip_hf=skip_hf)
                 if(len(tp_packet) > 0): tp_array.append(tp_packet)
 
             ssr_adcs = adcs_sub[-31:]
@@ -191,9 +213,9 @@ class TPGManager:
         fir_df = []
         for chan in track(chan_list, description="Processing channels..."):
             if skip_hf:
-                ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan)
+                ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan, skip_hf=skip_hf)
             else:
-                tp_chan_df, ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan)
+                tp_chan_df, ped_chan_df, pedval_chan_df, fir_chan_df = self.run_channel(rtpc_df, chan, shift, pedchan, skip_hf=skip_hf)
                 tp_df.append(tp_chan_df)
             ped_df.append(ped_chan_df)
             pedval_df.append(pedval_chan_df)
