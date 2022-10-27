@@ -75,7 +75,8 @@ class TPGManager:
         chan_list = pedsub_df.keys()
         fir_df = []
 
-        for chan in track(chan_list, description="Applying filter..."):
+        #for chan in track(chan_list, description="Applying filter..."):
+        for chan in chan_list:
             timestamps = pedsub_df[chan].index.astype(int)
             adcs = pedsub_df[chan].values
             tpg = dtpemulator.TPGenerator(self.fir_path, self.fir_shift, self.threshold)

@@ -50,14 +50,41 @@ def cli(interactive: bool, files_path: str, threshold: int = 20, out_file: str =
     rtpc_df = pd.read_hdf(files_path, 'rtpc')
     rich.print(rtpc_df)
 
-    #Two ways of running without the hf:
-    #Either run first pedsub and then fir (data IS NOT process in packets)...
     tpgm = TPGManager(500, "data/fir_coeffs.dat", 6, threshold)
     pedsub_df, pedval_df, accum_df = tpgm.pedestal_subtraction(rtpc_df, pedchan=True)
-    fir_df = tpgm.fir_filter(pedsub_df)
+    SN_raw = pedsub_df.apply(signal_to_noise, axis=0, raw=True)
 
-    #...or run the whole chain skiping the hf (data IS process in packets)
-    ped_df, pedval_df, fir_df = tpgm.run_capture(rtpc_df, 0, 0, pedchan=True, align=False, skip_hf=True)
+    cutoffs = np.linspace(0,0.2,10)
+    trans_widths = np.linspace(0.01,0.1,10)
+
+    IR_U = []
+    IR_V = []
+    IR_X = []
+
+    for cutoff in track(cutoffs, description="Applying filters..."):
+        IR_U_aux = []
+        IR_V_aux = []
+        IR_X_aux = []
+        for trans_width in trans_widths:
+            taps = scipy.signal.remez(32,[0, cutoff, cutoff+trans_width, 0.5],[150,0])
+            np.savetxt("data/temp_taps.txt", taps)
+            tpgm = TPGManager(500, "data/temp_taps.txt", 6, threshold)
+            fir_df = tpgm.fir_filter(pedsub_df)
+            SN = fir_df.apply(signal_to_noise, axis=0, raw=True)
+            IR = SN/SN_raw
+            IR_U_aux.append(IR.iloc[IR.index%2560<800].mean())
+            IR_V_aux.append(IR.iloc[(IR.index%2560>=800)&(IR.index%2560<1600)].mean())
+            IR_X_aux.append(IR.iloc[IR.index%2560>=1600].mean())
+        IR_U.append(IR_U_aux)
+        IR_V.append(IR_V_aux)
+        IR_X.append(IR_X_aux)
+
+    IR_U_df = pd.DataFrame(collections.OrderedDict([('trans width', trans_widths)]+[(cutoffs[i], IR_U[i]) for i in range(10)]))
+    IR_U_df = IR_U_df.set_index('trans width')
+    IR_V_df = pd.DataFrame(collections.OrderedDict([('trans width', trans_widths)]+[(cutoffs[i], IR_V[i]) for i in range(10)]))
+    IR_V_df = IR_V_df.set_index('trans width')
+    IR_X_df = pd.DataFrame(collections.OrderedDict([('trans width', trans_widths)]+[(cutoffs[i], IR_X[i]) for i in range(10)]))
+    IR_X_df = IR_X_df.set_index('trans width')
 
     if interactive:
         import IPython
